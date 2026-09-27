@@ -54,7 +54,7 @@ test('资源 mention 按智能体选择生成，不把预加载 Skills 当成可
     assert.deepEqual(getMentionSkills({ skills: ['skill-b'], preload_skills: ['skill-a'] }), [
       { slug: 'skill-b', name: 'Skill B', description: '' }
     ])
-    assert.deepEqual(getMentionSkills({ skills: null, preload_skills: [] }), [
+    assert.deepEqual(getMentionSkills({ skills: 'all', preload_skills: [] }), [
       { slug: 'skill-a', name: 'Skill A', description: '' },
       { slug: 'skill-b', name: 'Skill B', description: '' }
     ])
@@ -84,8 +84,8 @@ test('资源 mention 按智能体选择生成，不把预加载 Skills 当成可
       { id: 'sub-a', slug: 'sub-a', name: 'Sub A', description: '' },
       { id: 'sub-b', slug: 'sub-b', name: 'Sub B', description: '' }
     ]
-    assert.deepEqual(getMentionSubagents({ subagents: null }), allSubagents)
-    assert.deepEqual(getMentionSubagents({ subagents: [] }), allSubagents)
+    assert.deepEqual(getMentionSubagents({ subagents: 'all' }), allSubagents)
+    assert.deepEqual(getMentionSubagents({ subagents: [] }), [])
     assert.deepEqual(getMentionSubagents({ subagents: ['sub-b'] }), [allSubagents[1]])
   } finally {
     await server.close()

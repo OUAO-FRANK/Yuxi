@@ -9,7 +9,7 @@ from typing import Any, Literal
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.agents.context import AGENT_RUNTIME_RESOURCE_FIELDS
+from yuxi.agents.context import AGENT_RUNTIME_RESOURCE_FIELDS, validate_resource_selection
 from yuxi.agents.presets import AgentPreset
 from yuxi.agents.presets.default_chatbot import PRESET as DEFAULT_AGENT
 from yuxi.permissions import ResourcePermission, normalize_permission_config, resolve_agent_permission
@@ -420,15 +420,18 @@ def merge_agent_config_json(
     merged_context = {**current_context, **patch_context}
 
     for field_name in AGENT_RESOURCE_CONFIG_FIELDS & patch_context.keys():
-        requested = _normalize_resource_references(field_name, patch_context[field_name])
-        if not requested:
+        requested = validate_resource_selection(field_name, patch_context[field_name])
+        if requested == "all" or not requested:
             merged_context[field_name] = requested
             continue
 
         if field_name not in resource_access:
             raise ValueError(f"智能体资源字段 {field_name} 未经过权限校验")
         accessible = {str(item) for item in resource_access[field_name]}
-        previous = _normalize_resource_references(field_name, current_context.get(field_name)) or []
+        previous = current_context.get(field_name, [])
+        if previous == "all":
+            previous = []
+        previous = validate_resource_selection(field_name, previous)
         previous_set = set(previous)
         unauthorized_new = [item for item in requested if item not in accessible and item not in previous_set]
         if unauthorized_new:
@@ -441,22 +444,3 @@ def merge_agent_config_json(
 
     merged["context"] = merged_context
     return merged
-
-
-def _normalize_resource_references(field_name: str, value: Any) -> list[str] | None:
-    """规范化一个资源引用字段，并拒绝非字符串列表。"""
-    if value is None:
-        return None
-    if not isinstance(value, list):
-        raise ValueError(f"智能体资源字段 {field_name} 必须是字符串列表或 null")
-
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for item in value:
-        if not isinstance(item, str) or not item.strip():
-            raise ValueError(f"智能体资源字段 {field_name} 必须是字符串列表或 null")
-        key = item.strip()
-        if key not in seen:
-            normalized.append(key)
-            seen.add(key)
-    return normalized

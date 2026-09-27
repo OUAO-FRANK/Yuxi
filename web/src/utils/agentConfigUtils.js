@@ -59,16 +59,16 @@ export const mergeVisibleAgentResourceSelection = (current, available, selected)
   return [...retained, ...selected.filter((value) => !retainedKeys.has(String(value)))]
 }
 
-/** 按配置字段的空值契约投影可见选择，子智能体空列表表示使用全部。 */
+/** 全部模式包含后续新增资源，省略字段沿用默认值。 */
+export const isAllAgentResourceSelection = (current, field) =>
+  current === 'all' || (current === undefined && isDefaultAllAgentResourceField(field))
+
+export const supportsAllAgentResources = (field) =>
+  isDefaultAllAgentResourceField(field) || field === 'mcps'
+
+/** 将配置意图投影为当前可见选择，空列表始终不选择。 */
 export const getVisibleAgentResourceSelection = (current, field, available) => {
-  if (
-    isDefaultAllAgentResourceField(field) &&
-    (current === null ||
-      current === undefined ||
-      (field === 'subagents' && Array.isArray(current) && current.length === 0))
-  ) {
-    return [...available]
-  }
+  if (isAllAgentResourceSelection(current, field)) return [...available]
   if (!Array.isArray(current)) return []
   const visible = new Set(available.map(String))
   return current.filter((value) => visible.has(String(value)))
@@ -80,6 +80,8 @@ export const getAgentResourceSelectionOptions = (field, item, config, configItem
   if (field !== 'preload_skills') return options
 
   const availableSkills = getAgentConfigOptions(configItems.skills).map(getAgentConfigOptionValue)
-  const enabled = new Set(getVisibleAgentResourceSelection(config.skills, 'skills', availableSkills))
+  const enabled = new Set(
+    getVisibleAgentResourceSelection(config.skills, 'skills', availableSkills)
+  )
   return options.filter((option) => enabled.has(getAgentConfigOptionValue(option)))
 }

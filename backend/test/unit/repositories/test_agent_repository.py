@@ -101,9 +101,9 @@ def test_merge_agent_config_json_applies_visible_edits_and_preserves_hidden_refe
     assert merged["context"]["skills"] == ["hidden-a", "visible-b", "hidden-b", "visible-c"]
 
 
-@pytest.mark.parametrize("strategy", [None, []])
+@pytest.mark.parametrize("strategy", ["all", []])
 def test_merge_agent_config_json_replaces_resource_list_for_explicit_strategy_switch(strategy):
-    """显式空列表或 null 整体切换资源策略。"""
+    """显式空列表或 all 整体切换资源策略。"""
     merged = merge_agent_config_json(
         {"context": {"skills": ["visible", "hidden"], "subagents": ["visible-subagent", "hidden-subagent"]}},
         {"context": {"skills": strategy, "subagents": strategy}},
@@ -391,3 +391,31 @@ async def test_normal_user_can_update_agent_with_equivalent_v2_share_config():
         "department_ids": [],
         "user_uids": ["manager"],
     }
+
+
+@pytest.mark.parametrize("field", ["tools", "knowledges", "skills", "subagents", "mcps", "preload_skills"])
+@pytest.mark.parametrize("invalid", [None, "full", ["ok", 1], [""], {"mode": "all"}])
+def test_resource_write_rejects_invalid_selection(field, invalid):
+    """替代写入路径同样拒绝非法资源配置。"""
+    with pytest.raises(ValueError, match=field):
+        merge_agent_config_json({}, {"context": {field: invalid}}, resource_access={})
+
+
+def test_all_selection_is_not_a_previous_reference_list():
+    """all 不授予新增不可见引用的权限。"""
+    with pytest.raises(ValueError, match="无权新增"):
+        merge_agent_config_json(
+            {"context": {"skills": "all"}}, {"context": {"skills": ["a"]}}, resource_access={"skills": set()}
+        )
+    merged = merge_agent_config_json(
+        {"context": {"skills": "all", "tools": "all"}},
+        {"context": {"skills": ["a"]}},
+        resource_access={"skills": {"a"}},
+    )
+    assert merged == {"context": {"skills": ["a"], "tools": "all"}}
+
+
+def test_preload_skills_rejects_all():
+    """预加载必须显式列出 Skill。"""
+    with pytest.raises(ValueError, match="preload_skills"):
+        merge_agent_config_json({}, {"context": {"preload_skills": "all"}}, resource_access={})

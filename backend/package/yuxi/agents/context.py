@@ -3,12 +3,15 @@
 import asyncio
 import uuid
 from dataclasses import MISSING, dataclass, field, fields
-from typing import Any, get_origin
+from typing import Any, Literal, get_origin
 
 from yuxi.agents.tool_approval import DEFAULT_TOOL_APPROVAL_MODE
 from yuxi.config.options import system_options
 from yuxi.utils.logging_config import logger
 from yuxi.workspace.filesystem import Workspace
+
+type ResourceSelection = Literal["all"] | list[str]
+AGENT_RUNTIME_RESOURCE_FIELDS = frozenset({"tools", "knowledges", "skills", "subagents", "mcps"})
 
 WORKSPACE_AGENTS_PROMPT_MAX_BYTES = 64 * 1024
 WORKSPACE_BASE_CONTEXT_FILES = ("AGENTS.md", "USER.md")
@@ -142,7 +145,10 @@ class BaseContext:
 
     def update_config(self, data: dict):
         """仅装载允许用户配置的声明字段，运行身份由执行入口注入。"""
-        self.update(filter_declared_config({"context": data}, type(self))["context"])
+        config = filter_declared_config({"context": data}, type(self))["context"]
+        for name in (AGENT_RUNTIME_RESOURCE_FIELDS | {"preload_skills"}) & config.keys():
+            config[name] = validate_resource_selection(name, config[name])
+        self.update(config)
 
     def update(self, data: dict):
         """用运行时输入更新已声明的配置字段。"""
@@ -220,8 +226,8 @@ class BaseContext:
         },
     )
 
-    tools: list[str] | None = field(
-        default=None,
+    tools: ResourceSelection = field(
+        default="all",
         metadata={
             "name": "工具",
             "description": "内置的工具。默认选择当前用户可用的全部工具。",
@@ -230,8 +236,8 @@ class BaseContext:
         },
     )
 
-    knowledges: list[str] | None = field(
-        default=None,
+    knowledges: ResourceSelection = field(
+        default="all",
         metadata={
             "name": "知识库",
             "description": "知识库列表，可以在左侧知识库页面中创建知识库。默认选择当前用户可访问的全部知识库。",
@@ -240,7 +246,7 @@ class BaseContext:
         },
     )
 
-    mcps: list[str] = field(
+    mcps: ResourceSelection = field(
         default_factory=list,
         metadata={
             "name": "MCP服务器",
@@ -255,8 +261,8 @@ class BaseContext:
         },
     )
 
-    skills: list[str] | None = field(
-        default=None,
+    skills: ResourceSelection = field(
+        default="all",
         metadata={
             "name": "Skills",
             "options": [],
@@ -395,48 +401,6 @@ class BaseContext:
             return str(field_type)
 
 
-_DEFAULT_ALL_CONTEXT_FIELDS = frozenset({"tools", "knowledges", "skills"})
-_EMPTY_ALL_CONTEXT_FIELDS = frozenset({"subagents"})
-AGENT_RUNTIME_RESOURCE_FIELDS = _DEFAULT_ALL_CONTEXT_FIELDS | _EMPTY_ALL_CONTEXT_FIELDS | {"mcps"}
-
-
-def _normalize_selected_resource_keys(value: Any, available: list[str]) -> list[str]:
-    if not isinstance(value, list):
-        return []
-
-    allowed = set(available)
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for item in value:
-        if not isinstance(item, str):
-            continue
-        key = item.strip()
-        if not key or key in seen or key not in allowed:
-            continue
-        seen.add(key)
-        normalized.append(key)
-    return normalized
-
-
-def _resource_fields_requiring_available_keys(normalized: dict, resource_fields: set[str]) -> set[str]:
-    fields_to_load: set[str] = set()
-    for field_name in resource_fields:
-        current = normalized.get(field_name)
-        if current is None:
-            if field_name in _DEFAULT_ALL_CONTEXT_FIELDS | _EMPTY_ALL_CONTEXT_FIELDS:
-                fields_to_load.add(field_name)
-            else:
-                normalized[field_name] = []
-        elif field_name in _EMPTY_ALL_CONTEXT_FIELDS and current == []:
-            normalized[field_name] = None
-            fields_to_load.add(field_name)
-        elif isinstance(current, list) and current:
-            fields_to_load.add(field_name)
-        else:
-            normalized[field_name] = []
-    return fields_to_load
-
-
 def _resource_option(key: Any, name: Any = None, description: Any = None) -> dict[str, str]:
     key_value = str(key)
     return {
@@ -508,13 +472,19 @@ async def normalize_agent_context_config(
     user,
     context_schema: type[BaseContext] | None = None,
 ) -> dict:
+    """按字段默认值展开资源选择，返回当前用户可用的运行列表。"""
     schema = context_schema or BaseContext
     raw_context = dict(context) if isinstance(context, dict) else {}
     filtered = filter_declared_config({"context": raw_context}, schema)
+    defaults = schema()
     field_names = {item.name for item in fields(schema)}
     normalized = dict(filtered.get("context") or {})
     resource_fields = AGENT_RUNTIME_RESOURCE_FIELDS & field_names
-    fields_to_load = _resource_fields_requiring_available_keys(normalized, resource_fields)
+    for field_name in resource_fields | ({"preload_skills"} & field_names):
+        normalized[field_name] = validate_resource_selection(
+            field_name, normalized.get(field_name, getattr(defaults, field_name))
+        )
+    fields_to_load = {name for name in resource_fields if normalized[name]}
     if fields_to_load:
         resource_options = await resolve_agent_resource_options(fields_to_load, db=db, user=user)
         available = {
@@ -524,16 +494,16 @@ async def normalize_agent_context_config(
 
         for field_name, available_keys in available.items():
             current = normalized.get(field_name)
-            if current is None:
+            if current == "all":
                 normalized[field_name] = available_keys
             else:
-                normalized[field_name] = _normalize_selected_resource_keys(current, available_keys)
+                allowed = set(available_keys)
+                normalized[field_name] = [key for key in current if key in allowed]
 
     if "preload_skills" in field_names:
-        normalized["preload_skills"] = _normalize_selected_resource_keys(
-            normalized.get("preload_skills"),
-            normalized.get("skills", []),
-        )
+        normalized["preload_skills"] = [
+            key for key in normalized["preload_skills"] if key in normalized.get("skills", [])
+        ]
 
     return normalized
 
@@ -595,3 +565,15 @@ async def prepare_agent_runtime_context(
     context._runtime_prepared = True
 
     return context
+
+
+def validate_resource_selection(field_name: str, value: Any) -> ResourceSelection:
+    """校验资源选择协议，预加载只允许显式列表。"""
+    if field_name in AGENT_RUNTIME_RESOURCE_FIELDS and value == "all":
+        return "all"
+    if not isinstance(value, list) or any(not isinstance(item, str) or not item.strip() for item in value):
+        expected = (
+            '"all" 或非空字符串组成的列表' if field_name in AGENT_RUNTIME_RESOURCE_FIELDS else "非空字符串组成的列表"
+        )
+        raise ValueError(f"智能体资源字段 {field_name} 必须是{expected}")
+    return list(dict.fromkeys(item.strip() for item in value))

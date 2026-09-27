@@ -41,7 +41,7 @@ test('编辑可见选择保留不可见引用，取消最后一个可见项不�
     'hidden-b'
   ])
   assert.deepEqual(mergeVisibleAgentResourceSelection(original, [], []), original)
-  assert.deepEqual(mergeVisibleAgentResourceSelection(null, ['visible-a'], []), [])
+  assert.deepEqual(mergeVisibleAgentResourceSelection('all', ['visible-a'], []), [])
   assert.deepEqual(
     mergeVisibleAgentResourceSelection(
       original,
@@ -63,10 +63,10 @@ test('编辑可见选择保留不可见引用，取消最后一个可见项不�
 
 test('资源缺省按字段契约投影，预加载 Skills 与 MCP 默认关闭', () => {
   const available = ['a', 'b']
-  assert.deepEqual(getVisibleAgentResourceSelection([], 'subagents', available), available)
-  assert.deepEqual(getVisibleAgentResourceSelection(null, 'subagents', available), available)
+  assert.deepEqual(getVisibleAgentResourceSelection([], 'subagents', available), [])
+  assert.deepEqual(getVisibleAgentResourceSelection('all', 'subagents', available), available)
   assert.deepEqual(getVisibleAgentResourceSelection([], 'skills', available), [])
-  assert.deepEqual(getVisibleAgentResourceSelection(null, 'skills', available), available)
+  assert.deepEqual(getVisibleAgentResourceSelection('all', 'skills', available), available)
   assert.deepEqual(getVisibleAgentResourceSelection(undefined, 'skills', available), available)
   assert.deepEqual(getVisibleAgentResourceSelection(null, 'preload_skills', available), [])
   assert.deepEqual(getVisibleAgentResourceSelection(['a'], 'preload_skills', available), ['a'])
@@ -80,18 +80,32 @@ test('资源缺省按字段契约投影，预加载 Skills 与 MCP 默认关闭'
 test('预加载候选项只包含 Agent 当前启用的 Skill', () => {
   const options = [{ key: 'a' }, { key: 'b' }]
   const items = { skills: { options }, preload_skills: { options } }
-  assert.deepEqual(getAgentResourceSelectionOptions('preload_skills', items.preload_skills, { skills: ['a'] }, items), [
-    { key: 'a' }
-  ])
+  assert.deepEqual(
+    getAgentResourceSelectionOptions(
+      'preload_skills',
+      items.preload_skills,
+      { skills: ['a'] },
+      items
+    ),
+    [{ key: 'a' }]
+  )
   assert.deepEqual(
     getAgentResourceSelectionOptions('preload_skills', items.preload_skills, { skills: [] }, items),
     []
   )
   assert.deepEqual(
-    getAgentResourceSelectionOptions('preload_skills', items.preload_skills, { skills: null }, items),
+    getAgentResourceSelectionOptions(
+      'preload_skills',
+      items.preload_skills,
+      { skills: 'all' },
+      items
+    ),
     options
   )
-  assert.deepEqual(getAgentResourceSelectionOptions('mcps', { options }, { skills: [] }, items), options)
+  assert.deepEqual(
+    getAgentResourceSelectionOptions('mcps', { options }, { skills: [] }, items),
+    options
+  )
 })
 
 test('normalizeAgentBackendOption 缺少名称时回退到 backend_id', () => {
@@ -103,4 +117,12 @@ test('normalizeAgentBackendOption 缺少名称时回退到 backend_id', () => {
     normalizeAgentBackendOption({ backend_id: 'ChatbotAgent', name: '对话智能体' }),
     { label: '对话智能体', value: 'ChatbotAgent' }
   )
+})
+
+test('all 跟随新增资源，逐项全选仍保持固定列表', () => {
+  assert.deepEqual(getVisibleAgentResourceSelection('all', 'mcps', ['a', 'b']), ['a', 'b'])
+  const fixed = mergeVisibleAgentResourceSelection('all', ['a'], ['a'])
+  assert.deepEqual(fixed, ['a'])
+  assert.deepEqual(getVisibleAgentResourceSelection(fixed, 'skills', ['a', 'b']), ['a'])
+  assert.deepEqual(getVisibleAgentResourceSelection('all', 'skills', ['a', 'b']), ['a', 'b'])
 })
